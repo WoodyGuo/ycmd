@@ -28,35 +28,35 @@ from ycmd import utils
 from ycmd import responses
 from ycmd.completers.completer import Completer
 
-DART_FILETYPES = set(['dart'])
+DART_FILETYPES = set(["dart"])
 
 _logger = logging.getLogger(__name__)
 
 reload(sys)
-sys.setdefaultencoding('utf-8')
+sys.setdefaultencoding("utf-8")
 
 
 def PathToDartBinFolder(user_options):
-    bin_folder = user_options.get('dart_bin_folder_path')
+    bin_folder = user_options.get("dart_bin_folder_path")
     if not bin_folder:
-        dart_binary = utils.PathToFirstExistingExecutable(['dart'])
+        dart_binary = utils.PathToFirstExistingExecutable(["dart"])
         if dart_binary:
             bin_folder = os.path.dirname(dart_binary)
 
-    if not bin_folder or os.path.basename(bin_folder) != 'bin':
-        raise RuntimeError('Dart-sdk bin folder not found, please specify '
-                           'g:ycm_path_to_dart_bin_folder in your .vimrc')
+    if not bin_folder or os.path.basename(bin_folder) != "bin":
+        raise RuntimeError("Dart-sdk bin folder not found, please specify "
+                           "g:ycm_path_to_dart_bin_folder in your .vimrc")
     return bin_folder
 
 
 def FindDartBinary(user_options):
     bin_folder = PathToDartBinFolder(user_options)
-    return bin_folder + '/dart'
+    return bin_folder + "/dart"
 
 
 def FindDartAnalysisServer(user_options):
     bin_folder = PathToDartBinFolder(user_options)
-    return bin_folder + '/snapshots/analysis_server.dart.snapshot'
+    return bin_folder + "/snapshots/analysis_server.dart.snapshot"
 
 
 class AnalysisService(object):
@@ -64,8 +64,8 @@ class AnalysisService(object):
     def __init__(self, user_options):
         dart_bin = FindDartBinary(user_options)
         analysis_server_path = FindDartAnalysisServer(user_options)
-        flags_string = user_options.get('dart_analysis_server_flags')
-        flags = [] if not flags_string else flags_string.split(' ')
+        flags_string = user_options.get("dart_analysis_server_flags")
+        flags = [] if not flags_string else flags_string.split(" ")
         cmd = [dart_bin, analysis_server_path] + flags
         self._process = utils.SafePopen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         self._request_id = 0
@@ -81,7 +81,7 @@ class AnalysisService(object):
     def _SendRequestAndWaitForResults(self, method, params, result_type):
         with self._lock:
             response = self._SendRequest(method, params)
-            result_id = response['id']
+            result_id = response["id"]
             results = []
             while True:
                 line = self._process.stdout.readline()
@@ -91,8 +91,8 @@ class AnalysisService(object):
                     (response["params"]["id"] == result_id)):
                     _logger.info("got result!")
                     params = response["params"]
-                    results.extend(params['results'])
-                    if params['isLast']:
+                    results.extend(params["results"])
+                    if params["isLast"]:
                         return results
 
     def _SendRequest(self, method, params):
@@ -100,7 +100,7 @@ class AnalysisService(object):
             request_id = self._GetNextRequestId()
             request = {"id": request_id, "method": method, "params": params}
             self._process.stdin.write(json.dumps(request))
-            self._process.stdin.write('\n')
+            self._process.stdin.write("\n")
             self._process.stdin.flush()
             _logger.info("sent request: %s" % request)
             while True:
@@ -158,18 +158,18 @@ class AnalysisService(object):
 class RequestData(object):
 
     def __init__(self, request_data):
-        self.filename = request_data['filepath']
-        self.contents = request_data['file_data'][self.filename]['contents']
-        self.line = request_data['line_num']
-        self.column = request_data['column_num']
+        self.filename = request_data["filepath"]
+        self.contents = request_data["file_data"][self.filename]["contents"]
+        self.line = request_data["line_num"]
+        self.column = request_data["column_num"]
         self.offset = _ComputeOffset(self.contents, self.line, self.column)
 
 
 class DartCompleter(Completer):
 
     _subcommands = {
-        'GoToDefinition': lambda self, data: self._GoToDefinition(data),
-        'GetType': lambda self, data: self._GetType(data),
+        "GoToDefinition": lambda self, data: self._GoToDefinition(data),
+        "GetType": lambda self, data: self._GetType(data),
     }
 
     def __init__(self, user_options):
@@ -198,11 +198,11 @@ class DartCompleter(Completer):
         _logger.info("enter buffer: %s " % filename)
 
         directory = os.path.dirname(filename)
-        while (not os.path.exists(os.path.join(directory, "pubspec.yaml")) and directory != '' and
-               directory != '/'):
+        while (not os.path.exists(os.path.join(directory, "pubspec.yaml")) and directory != "" and
+               directory != "/"):
             directory = os.path.dirname(directory)
 
-        if directory == '' or directory == '/':
+        if directory == "" or directory == "/":
             directory = os.path.dirname(filename)
 
         if directory not in self._roots:
@@ -219,9 +219,9 @@ class DartCompleter(Completer):
         self._EnsureFileInAnalysisServer(request_data["filepath"])
 
     def OnFileReadyToParse(self, request_data):
-        filename = request_data['filepath']
+        filename = request_data["filepath"]
         self._EnsureFileInAnalysisServer(filename)
-        contents = request_data['file_data'][filename]['contents']
+        contents = request_data["file_data"][filename]["contents"]
         self._service.UpdateFileContent(filename, contents)
         return self._GetErrorsResponseToDiagnostics(contents, self._service.GetErrors(filename))
 
@@ -237,68 +237,68 @@ class DartCompleter(Completer):
         r = RequestData(request_data)
         result = self._service.GetNavigation(r.filename, r.offset, 1)
         _logger.info("navigation: %s " % result)
-        if 'targets' in result and 'files' in result:
-            target = result['targets'][0]
-            filepath = result['files'][target['fileIndex']]
+        if "targets" in result and "files" in result:
+            target = result["targets"][0]
+            filepath = result["files"][target["fileIndex"]]
             _logger.info("jump to: %s " % target)
-            return responses.BuildGoToResponse(filepath, target['startLine'], target['startColumn'])
+            return responses.BuildGoToResponse(filepath, target["startLine"], target["startColumn"])
         else:
-            raise RuntimeError('Can\'t jump to definition')
+            raise RuntimeError("Can\"t jump to definition")
 
     def _GetType(self, request_data):
         r = RequestData(request_data)
         result = self._service.GetHover(r.filename, r.offset)
-        if result['hovers']:
-            hover = result['hovers'][0]
-            if 'propagatedType' in hover:
-                return {'message': hover['propagatedType']}
-            elif 'elementDescription' in hover:
-                description = self._ToAscii(hover['elementDescription'])
-                return {'message': description}
+        if result["hovers"]:
+            hover = result["hovers"][0]
+            if "propagatedType" in hover:
+                return {"message": hover["propagatedType"]}
+            elif "elementDescription" in hover:
+                description = self._ToAscii(hover["elementDescription"])
+                return {"message": description}
             else:
-                raise Exception('unknown type')
+                raise Exception("unknown type")
         else:
-            raise Exception('unknown type')
+            raise Exception("unknown type")
 
     def _GetErrorsResponseToDiagnostics(self, contents, response):
         result = []
-        for error in response['errors']:
-            location = error['location']
+        for error in response["errors"]:
+            location = error["location"]
             end_line, end_col = _ComputeLineAndColumn(contents,
-                                                      location['offset'] + location['length'])
+                                                      location["offset"] + location["length"])
             result.append({
-                'location': {
-                    'line_num': location['startLine'],
-                    'column_num': location['startColumn'],
-                    'filepath': location['file']
+                "location": {
+                    "line_num": location["startLine"],
+                    "column_num": location["startColumn"],
+                    "filepath": location["file"]
                 },
-                'location_extent': {
-                    'start': {
-                        'line_num': location['startLine'],
-                        'column_num': location['startColumn']
+                "location_extent": {
+                    "start": {
+                        "line_num": location["startLine"],
+                        "column_num": location["startColumn"]
                     },
-                    'end': {
-                        'line_num': end_line,
-                        'column_num': end_col
+                    "end": {
+                        "line_num": end_line,
+                        "column_num": end_col
                     }
                 },
-                'ranges': [],
-                'text': error['message'],
-                'kind': error['severity']
+                "ranges": [],
+                "text": error["message"],
+                "kind": error["severity"]
             })
         return result
 
     def _ToAscii(self, str):
-        result = str.replace(u'\u2192', '->')
-        return result.decode('utf-8').encode('ascii', 'ignore')
+        result = str.replace(u"\u2192", "->")
+        return result.decode("utf-8").encode("ascii", "ignore")
 
     def _SuggestionsToCandidates(self, suggestions):
         result = []
-        suggestions.sort(key=lambda s: -s['relevance'])
+        suggestions.sort(key=lambda s: -s["relevance"])
         for suggestion in suggestions:
-            entry = {'insertion_text': suggestion['completion']}
-            if 'returnType' in suggestion:
-                entry['extra_menu_info'] = suggestion['returnType']
+            entry = {"insertion_text": suggestion["completion"]}
+            if "returnType" in suggestion:
+                entry["extra_menu_info"] = suggestion["returnType"]
             result.append(entry)
         return result
 
@@ -310,7 +310,7 @@ def _ComputeLineAndColumn(contents, offset):
         if i == offset:
             return (curline, curcol)
         curcol += 1
-        if byte == '\n':
+        if byte == "\n":
             curline += 1
             curcol = 1
 
@@ -322,9 +322,9 @@ def _ComputeOffset(contents, line, col):
         if (curline == line) and (curcol == col):
             return i
         curcol += 1
-        if byte == '\n':
+        if byte == "\n":
             curline += 1
             curcol = 1
-    _logger.error("Dart completer - could not compute byte offset " + "corresponding to L%i C%i",
-                  line, col)
+    _logger.error("Dart completer - could not compute byte offset corresponding to L%i C%i", line,
+                  col)
     return -1

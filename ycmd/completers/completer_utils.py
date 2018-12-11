@@ -205,6 +205,7 @@ DEFAULT_FILETYPE_TRIGGERS = {
   'php' : [ '->', '::' ],
   ( 'cs,'
     'd,'
+    'dart,'
     'elixir,'
     'go,'
     'groovy,'

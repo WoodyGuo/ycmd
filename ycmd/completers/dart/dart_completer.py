@@ -28,6 +28,9 @@ from ycmd import utils
 from ycmd import responses
 from ycmd.completers.completer import Completer
 
+from DartAnalysisServer import DartAnalysisServer
+from DartAnalysisServerListener import DartAnalysisServerListener
+
 DART_FILETYPES = set(["dart"])
 
 _logger = logging.getLogger(__name__)
@@ -49,110 +52,65 @@ def PathToDartBinFolder(user_options):
     return bin_folder
 
 
-def FindDartBinary(user_options):
-    bin_folder = PathToDartBinFolder(user_options)
-    return bin_folder + "/dart"
+_condition = threading.Condition()
 
 
-def FindDartAnalysisServer(user_options):
-    bin_folder = PathToDartBinFolder(user_options)
-    return bin_folder + "/snapshots/analysis_server.dart.snapshot"
+class MyListener(DartAnalysisServerListener):
+
+    def on_server_ready(self, version, pid):
+        _logger.info("server %s started: %i", version, pid)
+
+    def on_server_error(self, error):
+        _logger.info("server error: %s" % error)
+
+    def on_response_available(self, response):
+        with _condition:
+            global response_json
+            response_json = json.load(response)
+            _condition.notifyAll()
 
 
 class AnalysisService(object):
 
     def __init__(self, user_options):
-        dart_bin = FindDartBinary(user_options)
-        analysis_server_path = FindDartAnalysisServer(user_options)
-        flags_string = user_options.get("dart_analysis_server_flags")
-        flags = [] if not flags_string else flags_string.split(" ")
-        cmd = [dart_bin, analysis_server_path] + flags
-        self._process = utils.SafePopen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        self._request_id = 0
-        self._lock = threading.RLock()
+        dart_bin_path = PathToDartBinFolder(user_options)
+        self._cpp_server = DartAnalysisServer.create(dart_bin_path, None)
+        self._listener = MyListener()
+        self._cpp_server.start(_listener)
 
     def Kill(self):
-        self._process.kill()
-
-    def _GetNextRequestId(self):
-        self._request_id += 1
-        return str(self._request_id)
-
-    def _SendRequestAndWaitForResults(self, method, params, result_type):
-        with self._lock:
-            response = self._SendRequest(method, params)
-            result_id = response["id"]
-            results = []
-            while True:
-                line = self._process.stdout.readline()
-                _logger.info("got line: %s" % line)
-                response = json.loads(line)
-                if (("event" in response) and (response["event"] == result_type) and
-                    (response["params"]["id"] == result_id)):
-                    _logger.info("got result!")
-                    params = response["params"]
-                    results.extend(params["results"])
-                    if params["isLast"]:
-                        return results
-
-    def _SendRequest(self, method, params):
-        with self._lock:
-            request_id = self._GetNextRequestId()
-            request = {"id": request_id, "method": method, "params": params}
-            self._process.stdin.write(json.dumps(request))
-            self._process.stdin.write("\n")
-            self._process.stdin.flush()
-            _logger.info("sent request: %s" % request)
-            while True:
-                line = self._process.stdout.readline()
-                _logger.info("got line: %s" % line)
-                response = json.loads(line)
-                if ("id" in response) and (response["id"] == request_id):
-                    _logger.info("got response!")
-                    if "error" in response:
-                        raise Exception(response["error"])
-                    elif "result" in response:
-                        return response["result"]
-                    else:
-                        return None
+        self._cpp_server.stop()
 
     def SetAnalysisRoots(self, included, excluded, packageRoots):
-        return self._SendRequest("analysis.setAnalysisRoots", {
-            "included": included,
-            "excluded": excluded,
-            "packageRoots": packageRoots
-        })
+        self._cpp_server.set_analysis_roots(included, excluded, package_roots)
 
     def SetPriorityFiles(self, files):
-        return self._SendRequest("analysis.setPriorityFiles", {"files": files})
+        self._cpp_server.set_priority_files(files)
 
     def UpdateFileContent(self, filename, content):
-        return self._SendRequest("analysis.updateContent",
-                                 {"files": {
-                                     filename: {
-                                         "type": "add",
-                                         "content": content
-                                     }
-                                 }})
+        self._cpp_server.update_content(file, content)
 
     def GetErrors(self, filename):
-        return self._SendRequest("analysis.getErrors", {"file": filename})
+        return None
 
     def GetNavigation(self, filename, offset, length):
-        return self._SendRequest("analysis.getNavigation", {
-            "file": filename,
-            "offset": offset,
-            "length": length
-        })
+        return None
 
     def GetHover(self, filename, offset):
-        return self._SendRequest("analysis.getHover", {"file": filename, "offset": offset})
+        return None
 
     def GetSuggestions(self, filename, offset):
-        return self._SendRequestAndWaitForResults("completion.getSuggestions", {
-            "file": filename,
-            "offset": offset
-        }, "completion.results")
+        result_id = self._cpp_server.get_suggestions(filename, offset)
+        results = []
+        with _condition:
+            _condition.wait()
+            if (("event" in response_json) and (response_json["event"] == result_type) and
+                (response_json["params"]["id"] == result_id)):
+                _logger.info("got result!")
+                params = response_json["params"]
+                results.extend(params["results"])
+                if params["isLast"]:
+                    return results
 
 
 class RequestData(object):

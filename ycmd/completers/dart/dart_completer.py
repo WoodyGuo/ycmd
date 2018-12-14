@@ -28,8 +28,9 @@ from ycmd import utils
 from ycmd import responses
 from ycmd.completers.completer import Completer
 
-from DartAnalysisServer import DartAnalysisServer
-from DartAnalysisServerListener import DartAnalysisServerListener
+from dartas import DartAnalysisServer
+
+_server_connected = False
 
 DART_FILETYPES = set(["dart"])
 
@@ -52,43 +53,71 @@ def PathToDartBinFolder(user_options):
     return bin_folder
 
 
-_condition = threading.Condition()
+def FindDartBinary(user_options):
+    bin_folder = PathToDartBinFolder(user_options)
+    return bin_folder + '/dart'
 
 
-class MyListener(DartAnalysisServerListener):
-
-    def on_server_ready(self, version, pid):
-        _logger.info("server %s started: %i", version, pid)
-
-    def on_server_error(self, error):
-        _logger.info("server error: %s" % error)
-
-    def on_response_available(self, response):
-        with _condition:
-            global response_json
-            response_json = json.load(response)
-            _condition.notifyAll()
+def FindDartAnalysisServer(user_options):
+    bin_folder = PathToDartBinFolder(user_options)
+    return bin_folder + '/snapshots/analysis_server.dart.snapshot'
 
 
 class AnalysisService(object):
 
     def __init__(self, user_options):
-        dart_bin_path = PathToDartBinFolder(user_options)
-        self._cpp_server = DartAnalysisServer.create(dart_bin_path, None)
-        self._listener = MyListener()
-        self._cpp_server.start(_listener)
+        self._cpp_server = DartAnalysisServer(
+            PathToDartBinFolder(user_options), None, self._onServerReady, self._onServerError,
+            self._onResponse)
+        self._condition = threading.Condition()
 
     def Kill(self):
         self._cpp_server.stop()
 
+    def _onServerReady(self, version, pid):
+        _logger.info(
+            '[%s] Server %s connected at %d' % (threading.currentThread().name, version, pid))
+        self._condition.acquire()
+        global _server_connected
+        _server_connected = True
+        _logger.info('%r' % _server_connected)
+        self._condition.notifyAll()
+        self._condition.release()
+
+    def _onServerError(self, error):
+        _logger.info('Server error: %s' % error)
+
+    def _onResponse(self, response):
+        _logger.info('Response: %s' % response)
+        global response_json
+        self._condition.acquire()
+        response_json = json.loads(response)
+        self._condition.notifyAll()
+        self._condition.release()
+
     def SetAnalysisRoots(self, included, excluded, packageRoots):
-        self._cpp_server.set_analysis_roots(included, excluded, package_roots)
+        self._condition.acquire()
+        global _server_connected
+        while not _server_connected:
+            self._condition.wait()
+        self._condition.release()
+
+        _id = self._cpp_server.setAnalysisRoots(included, excluded, packageRoots)
+        _logger.info("request setting analysis roots sent: %d " % _id)
 
     def SetPriorityFiles(self, files):
-        self._cpp_server.set_priority_files(files)
+        self._condition.acquire()
+        global _server_connected
+        while not _server_connected:
+            self._condition.wait()
+        self._condition.release()
+
+        _id = self._cpp_server.setPriorityFiles(files)
+        _logger.info("request setting priority files sent: %d " % _id)
 
     def UpdateFileContent(self, filename, content):
-        self._cpp_server.update_content(file, content)
+        _id = self._cpp_server.updateContent(filename, content)
+        _logger.info("request updating file content sent: %d " % _id)
 
     def GetErrors(self, filename):
         return None
@@ -100,17 +129,24 @@ class AnalysisService(object):
         return None
 
     def GetSuggestions(self, filename, offset):
-        result_id = self._cpp_server.get_suggestions(filename, offset)
+        result_id = self._cpp_server.getSuggestions(filename, offset)
+        _logger.info("request getting suggestions sent: %d in thread %s " %
+                     (result_id, threading.currentThread().name))
+        _logger.info("waiting for suggestions...")
         results = []
-        with _condition:
-            _condition.wait()
-            if (("event" in response_json) and (response_json["event"] == result_type) and
-                (response_json["params"]["id"] == result_id)):
-                _logger.info("got result!")
+        self._condition.acquire()
+        while True:
+            self._condition.wait()
+            global response_json
+            if ("event" in response_json) and (response_json["event"] == "completion.results"):
+                _logger.info("got suggestions")
                 params = response_json["params"]
                 results.extend(params["results"])
                 if params["isLast"]:
+                    self._condition.release()
                     return results
+            else:
+                _logger.info("not a suggestions response")
 
 
 class RequestData(object):
@@ -174,10 +210,13 @@ class DartCompleter(Completer):
             _logger.info("added priority file: %s " % filename)
 
     def OnBufferVisit(self, request_data):
-        self._EnsureFileInAnalysisServer(request_data["filepath"])
+        filename = request_data["filepath"]
+        _logger.info("visit buffer: %s " % filename)
+        self._EnsureFileInAnalysisServer(filename)
 
     def OnFileReadyToParse(self, request_data):
         filename = request_data["filepath"]
+        _logger.info("file ready to parse: %s " % filename)
         self._EnsureFileInAnalysisServer(filename)
         contents = request_data["file_data"][filename]["contents"]
         self._service.UpdateFileContent(filename, contents)
@@ -220,6 +259,8 @@ class DartCompleter(Completer):
 
     def _GetErrorsResponseToDiagnostics(self, contents, response):
         result = []
+        if True:
+            return result
         for error in response["errors"]:
             location = error["location"]
             end_line, end_col = _ComputeLineAndColumn(contents,

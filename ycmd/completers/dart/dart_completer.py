@@ -103,7 +103,7 @@ class AnalysisService(object):
         self._condition.release()
 
         _id = self._cpp_server.setAnalysisRoots(included, excluded, packageRoots)
-        _logger.info("request setting analysis roots sent: %d " % _id)
+        _logger.info("request setting analysis roots sent: %s " % _id)
 
     def SetPriorityFiles(self, files):
         self._condition.acquire()
@@ -113,11 +113,11 @@ class AnalysisService(object):
         self._condition.release()
 
         _id = self._cpp_server.setPriorityFiles(files)
-        _logger.info("request setting priority files sent: %d " % _id)
+        _logger.info("request setting priority files sent: %s " % _id)
 
     def UpdateFileContent(self, filename, content):
         _id = self._cpp_server.updateContent(filename, content)
-        _logger.info("request updating file content sent: %d " % _id)
+        _logger.info("request updating file content sent: %s " % _id)
 
     def GetErrors(self, filename):
         return None
@@ -130,7 +130,7 @@ class AnalysisService(object):
 
     def GetSuggestions(self, filename, offset):
         result_id = self._cpp_server.getSuggestions(filename, offset)
-        _logger.info("request getting suggestions sent: %d in thread %s " %
+        _logger.info("request getting suggestions sent: %s in thread %s " %
                      (result_id, threading.currentThread().name))
         _logger.info("waiting for suggestions...")
         results = []
@@ -138,7 +138,8 @@ class AnalysisService(object):
         while True:
             self._condition.wait()
             global response_json
-            if ("event" in response_json) and (response_json["event"] == "completion.results"):
+            if ("event" in response_json) and (response_json["event"] == "completion.results") and (
+                    result_id == response_json["id"]):
                 _logger.info("got suggestions")
                 params = response_json["params"]
                 results.extend(params["results"])
